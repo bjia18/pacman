@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+
+<html>
+    <p align="center">
+        <canvas id='game' width='800' height='700'></canvas>
+    </p>
+</html>
+
+<script>
+
+window.addEventListener("load", function(){
+    Game.init(sprites, startGame);
+});
+
+var PLAYER=1, GHOSTS=4, DOTS=5, UPDATE_TIME=120, ANIMATE_TIME=40, CANVAS_COLOR="#000000";
+
+function hexToRgbA(hex){
+    var c;
+    if(/^#([A-Fa-f0-9]{3}){1,2}$/.test(hex)){
+        c= hex.substring(1).split('');
+        if(c.length== 3){
+            c= [c[0], c[0], c[1], c[1], c[2], c[2]];
+        }
+        c= '0x'+c.join('');
+        return new Uint8ClampedArray([(c>>16)&255, (c>>8)&255, c&255, 255]);
+    }
+    throw new Error('Bad Hex');
+}
+
+function compareArrays(array1, array2){
+    return array1.length === array2.length && array1.every(function(value, index) { return value === array2[index]})
+}
+
+var sprites={
+    pacman:{
+        right:[{sx:315, sy:1215, w:180, h:195}, {sx:75, sy:1215, w:195, h:195}, {sx:525, sy:1215, w:135, h:195}], 
+        left:[{sx:1395, sy:660, w:180, h:195},  {sx:1620, sy:660, w:195, h:195}, {sx:1230, sy:660, w:135, h:195}],
+        up:[{sx:1465, sy:195, w:195, h:180}, {sx:1465, sy:420, w:195, h:195}, {sx:1465, sy:30, w:195, h:135}],
+        down:[{sx:1235, sy:270, w:195, h:180}, {sx:1235, sy:25, w:195, h:195}, {sx:1235, sy:480, w:195, h:135}]
+    },
+
+    board:{sx:13, sy:13, w:1175, h:1175},
+    
+    redGhost:{right:{sx:735, sy:1200, w:210, h:210}, down:{sx:1245, sy:1200, w:210, h:210}, up:{sx:1755, sy:1200, w:210, h:210}, left:{sx:360, sy:1440, w:210, h:210}}, 
+
+    blueGhost:{right:{sx:615, sy:1440, w:210, h:210}, down:{sx:1125, sy:1440, w:210, h:210}, up:{sx:1635, sy:1440, w:210, h:210}, left:{sx:360, sy:1440, w:210, h:210}},
+
+    orangeGhost:{right:{sx:615, sy:1680, w:210, h:210}, down:{sx:1125, sy:1680, w:210, h:210}, up:{sx:1635, sy:1680, w:210, h:210}, left:{sx:360, sy:1920, w:210, h:210}},
+
+    pinkGhost:{right:{sx:615, sy:1920, w:210, h:210}, down:{sx:1125, sy:1920, w:210, h:210}, up:{sx:1920, sy:1680, w:210, h:210}, left:{sx:360, sy:2160, w:210, h:210}},
+
+    edibleGhost:{sx:615, sy:2160, w:210, h:210},
+    deadGhost:{sx:1125, sy:2160, w:210, h:210},
+
+    normalDot:{sx:1705, sy:105, w:25, h:25},
+    powerDot:{sx:2145, sy:95, w:42, h:43}
+};
+
+var spriteSheet=new function(){
+    this.map={};
+    this.load=function(spriteData, callback){
+        this.map=spriteData;
+        this.image=new Image();
+        this.image.onload=callback;
+        this.image.src='edited-spritesheet.png';
+    };
+    this.draw=function(ctx, sprite, x, y, scale, dir){ //frame-specific positions
+        var s=this.map[sprite];
+        if (!scale) scale=1;
+        if (sprite=='pacman'){
+            ctx.drawImage(this.image, s[dir][0].sx, s[dir][0].sy, s[dir][0].w, s[dir][0].h, Math.floor(x), Math.floor(y), s[dir][0].w*scale, s[dir][0].h*scale);
+        } else if (dir!==undefined){
+            ctx.drawImage(this.image, s[dir].sx, s[dir].sy, s[dir].w, s[dir].h, Math.floor(x), Math.floor(y), s[dir].w*scale, s[dir].h*scale);
+        } else
+            ctx.drawImage(this.image, s.sx, s.sy, s.w, s.h, Math.floor(x), Math.floor(y), s.w*scale, s.h*scale);
+    };
+
+    this.animate=function(ctx, sprite, x, y, scale, dir, frame){
+        var s=spriteSheet.map[sprite];
+        if (!scale) scale=1;
+        if (sprite=="pacman"){
+            if (frame===undefined)
+                var frame=0;
+            //ctx.clearRect(0, 0, Game.canvas.width, Game.canvas.height);
+            ctx.drawImage(spriteSheet.image, s[dir][frame].sx, s[dir][frame].sy, s[dir][frame].w, s[dir][frame].h, Math.floor(x), Math.floor(y), s[dir][frame].w*scale, s[dir][frame].h*scale);
+
+            if (frame<3)
+                setTimeout(this.animate, ANIMATE_TIME, ctx, sprite, x, y, scale, dir, frame+1);
+            //console.log(frame);
+            //ctx.drawImage(this.image, s[dir][0].sx, s[dir][0].sy, s[dir][0].w, s[dir][0].h, Math.floor(x), Math.floor(y), s[dir][0].w*scale, s[dir][0].h*scale);
+
+        }
+    };
+        
+};
+
+var pacman=function(){
+    this.type=PLAYER;
+
+    this.dir='left';
+    this.scale=0.1;
+
+    this.w=spriteSheet.map['pacman'][this.dir][2].w;
+    this.h=spriteSheet.map['pacman'][this.dir][2].h;
+    this.x=400; //where it first appears
+    this.y=500;
+    this.vx=0;
+    this.vy=0;
+    this.step=75; //size of steps
+
+    this.touchingWall=false;
+
+    this.killed=function(){
+        this.board.markToRemove(this); //animation
+    };
+    
+    this.update=function(dt){
+        this.vx=0;
+        this.vy=0;
+
+        var leftPixel=compareArrays(Game.ctx.getImageData(this.x-1, this.y+this.h*this.scale/2, 1, 1).data, hexToRgbA(CANVAS_COLOR));
+        var rightPixel=compareArrays(Game.ctx.getImageData(this.x+this.w*this.scale+1, this.y+this.h*this.scale/2, 1, 1).data, hexToRgbA(CANVAS_COLOR));
+        var upPixel=compareArrays(Game.ctx.getImageData(this.x+this.w*this.scale/2, this.y-1, 1, 1).data, hexToRgbA(CANVAS_COLOR));
+        var downPixel=compareArrays(Game.ctx.getImageData(this.x+this.w*this.scale/2, this.y+this.h*this.scale+1, 1, 1).data, hexToRgbA(CANVAS_COLOR));
+        
+        if (leftPixel && rightPixel && upPixel && downPixel)
+            this.touchingWall=false;
+        else
+            this.touchingWall=true;
+
+        if (Game.keys['left']){
+            if (leftPixel)
+                this.vx=-this.step;
+            this.dir='left';
+        } else if (Game.keys['right']){
+            if (rightPixel)
+                this.vx=this.step;
+            this.dir='right';
+        } else if (Game.keys['up']){
+            if (upPixel)
+                this.vy=-this.step;
+            this.dir='up';
+        } else if (Game.keys['down']){
+            if (downPixel)
+                this.vy=this.step;
+            this.dir='down';
+        } else{
+            if (this.dir=='left' && leftPixel){
+                this.vx=-this.step;
+            } else if (this.dir=='right' && rightPixel){
+                this.vx=this.step;
+            } else if (this.dir=='up' && upPixel){
+                this.vy=-this.step;
+            } else if (this.dir=='down' && downPixel){
+                this.vy=this.step;
+            }
+        } 
+
+        //console.log(this.dir);
+
+        this.x+=this.vx*dt;
+        this.y+=this.vy*dt;
+
+        //check that pm doesn't overlap w/ board struct, check that only the 2 outs by horizontal side works 
+    };
+    
+    this.draw=function(ctx){
+        //console.log('draw pacman');
+        //if touching wall: spriteSheet.draw(ctx, 'pacman', this.x, this.y, this.scale, this.dir);
+        //else
+
+        if (this.touchingWall)
+            spriteSheet.draw(ctx, 'pacman', this.x, this.y, this.scale, this.dir);
+        else
+            spriteSheet.animate(ctx, 'pacman', this.x, this.y, this.scale, this.dir);
+    };
+};
+
+var startGame=function(){
+    
+    Game.screens[0].draw(Game.ctx);
+    //spriteSheet.draw(Game.ctx, "pacman", 100, 100, 0.2);
+    //console.log('start');
+};
+
+var playGame=function(){
+    var board=new gameBoard();
+    board.add(new pacman());
+    Game.setScreen(1, board);
+    Game.screens[1].draw(Game.ctx);
+    //board.add
+};
+
+var Game=new function(){
+    this.screens=[];
+    this.keys={};
+    var keyCodes={87: 'up', 83: 'down', 65: 'left', 68: 'right', 32: 'space', 27: 'esc'};
+
+    this.init=function(spriteData, callback){
+        this.canvas=document.getElementById('game');
+        this.width=this.canvas.width;
+        this.height=this.canvas.height;
+
+        this.ctx=this.canvas.getContext('2d');
+        this.setupInput();
+
+        spriteSheet.load(spriteData, callback);
+
+        Game.setScreen(0, new titleScreen("Pacman", "Press [space] to begin"));
+        Game.setScreen(1, new gameBoard());
+        Game.setScreen(2, new titleScreen("Paused", "Press [space] to continue"));
+        Game.setScreen(3, new titleScreen("Game Over", "Press [space] to restart"));
+    
+        //console.log('init');
+        this.loop();
+    };
+   
+    this.setupInput=function() {
+            window.addEventListener('keydown',function(e) {
+                    if(keyCodes[e.keyCode]) {
+                            Game.keys[keyCodes[e.keyCode]] = true;
+                            e.preventDefault();
+                            //e.stopPropagation();
+                    }
+            },false);
+
+            window.addEventListener('keyup',function(e) {
+                    if(keyCodes[e.keyCode]) {
+                            Game.keys[keyCodes[e.keyCode]] = false;
+                            e.preventDefault();
+                            //e.stopPropagation();
+                    }
+            },false);
+    };
+
+    this.loop=function(){
+        //console.log('loop');
+        var dt=UPDATE_TIME/1000;
+        if (Game.keys['space'] && Game.screens[0].active){
+            playGame();
+        } else if (Game.keys['space'] && Game.screens[2].active){
+            Game.screens[1].draw(Game.ctx);
+        } else if (Game.keys['space'] && Game.screens[3].active){
+            //restart game
+            playGame();
+        } else if (Game.keys['esc'] && Game.screens[1].active){
+            //pause game
+            Game.screens[2].draw(Game.ctx);
+        } else{
+            if( Game.screens[1].active){
+                Game.screens[1].draw(Game.ctx);
+                Game.screens[1].update(dt);
+            }
+        }
+
+        setTimeout(Game.loop, UPDATE_TIME);
+
+    };
+
+    this.setScreen= function(num, screen){ Game.screens[num]=screen; };
+};
+
+var gameBoard=function(){
+    var board=this;
+    this.scale=0.5;
+    this.x=(Game.canvas.width-spriteSheet.map['board'].w*this.scale)/2;
+    this.y=(Game.canvas.height-spriteSheet.map['board'].h*this.scale)/2;
+
+    this.active=false;
+    this.objects=[];
+    this.objTypeCounts=[];
+
+    this.add=function(obj){
+        obj.board=this;
+        this.objects.push(obj);
+        this.objTypeCounts[obj.type]=(this.objTypeCounts[obj.type] || 0)+1;
+        return obj;
+    };
+
+    this.objectsToRemove=[];
+
+    this.markToRemove=function(obj){
+        var alive=this.objects.indexOf(obj)!=-1;
+        if (alive)
+            this.objectsToRemove.push(obj);
+        return alive;
+    };
+
+    this.resetObjectsToRemove=function(obj){ this.objectsToRemove=[]; };
+
+    this.remove=function(){
+        for (var i=0;i<this.objectsToRemove.length;i++){
+            var idx=this.objects.indexOf(this.objectsToRemove[i]);
+            if (idx!=-1){
+                this.objTypeCounts[this.objectsToRemove[i].type]--;
+                this.objects.splice(idx, 1);
+            }
+        }
+    };
+
+    this.iterate=function(func){
+        var args=Array.prototype.slice.call(arguments, 1);
+        for (var i=0;i<this.objects.length;i++){
+            var obj=this.objects[i];
+            obj[func].apply(obj, args);
+        }
+    };
+
+    this.overlap=function(o1, o2){
+        return !((o1.y+o1.h-1<o2.y) || (o1.y>o2.y+o2.h-1) || (o1.x+o1.w-1<o2.x) || (o1.x>o2.x+o2.w-1));
+    };
+    
+    this.collide=function(obj,enemyType) {
+                for(var i = 0, len=this.objects.length; i < len; i++) {
+                    var opponent = this.objects [i];
+                    if(obj != opponent) {
+                        var collision = (!enemyType || opponent.type === enemyType) && board.overlap(obj,opponent) ;
+                        if (collision)
+                            return opponent;
+                    }
+                }
+                return false;
+    };
+
+    this.update=function(dt){
+        //console.log('board update');
+        this.resetObjectsToRemove();
+        this.iterate('update', dt);
+        this.remove();
+    };
+    
+    this.draw=function(ctx){
+        ctx.fillStyle="#000000";
+        ctx.fillRect(0,0,Game.canvas.width,Game.canvas.height);
+
+        spriteSheet.draw(ctx, 'board', this.x, this.y, this.scale);
+
+        this.iterate('draw', ctx);
+        //draw actual board
+        //spriteSheet.animate(ctx, 'pacman', this.x, this.y, this.scale, this.dir);
+        //console.log('draw');
+        
+        for(var i=0;i<Game.screens.length;i++) {
+                if( Game.screens[i])
+                    Game.screens[i].active=false;
+        }
+        this.active=true;
+    };
+};
+
+var titleScreen=function(title, subtitle){
+    this.title=title;
+    this.subtitle=subtitle;
+    //this.callback=callback;
+    this.active=false;
+    
+    /*this.update=function(){
+        if (Game.keys['space'] && this.callback)
+            this.callback(num);
+    };*/
+    this.draw= function(ctx){
+        ctx.fillStyle="rgb(0,0,0)";
+        ctx.fillRect(0,0,Game.canvas.width,Game.canvas.height);
+
+        ctx.fillStyle = "#FFFFFF";
+        ctx.textAlign = "center";
+        ctx.font = "bold 2em bangers";
+        ctx.fillText(this.title,Game.width/2,Game.height/2);
+
+        ctx.font = "bold 1.5em bangers";
+        ctx.fillText(this.subtitle,Game.width/2,Game.height/2 + 40);
+
+        for(var i=0;i<Game.screens.length;i++) {
+                if( Game.screens[i])
+                    Game.screens[i].active=false;
+        }
+        this.active=true;
+
+    };
+};
+
+</script>
+

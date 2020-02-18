@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+
+<html>
+    <p align="center">
+        <canvas id='game' width='900' height='900'></canvas>
+    </p>
+</html>
+
+<script>
+
+window.addEventListener("load", function(){
+    Game.init(sprites, startGame);
+});
+
+var PLAYER=1, GHOSTS=4, DOTS=5, UPDATE_TIME=60, ANIMATE_TIME=60, CANVAS_COLOR="#000000";
+
+function hexToRgbA(hex){
+    var c;
+    if(/^#([A-Fa-f0-9]{3}){1,2}$/.test(hex)){
+        c= hex.substring(1).split('');
+        if(c.length== 3){
+            c= [c[0], c[0], c[1], c[1], c[2], c[2]];
+        }
+        c= '0x'+c.join('');
+        return new Uint8ClampedArray([(c>>16)&255, (c>>8)&255, c&255, 255]);
+    }
+    throw new Error('Bad Hex');
+}
+
+function arraysEqual(array1, array2){
+    return array1.length === array2.length && array1.every(function(value, index) { return value === array2[index]})
+}
+
+var sprites={
+    pacman:{
+        right:[{sx:315, sy:1215, w:180, h:195}, {sx:75, sy:1215, w:195, h:195}, {sx:525, sy:1215, w:135, h:195}], 
+        left:[{sx:1395, sy:660, w:180, h:195},  {sx:1620, sy:660, w:195, h:195}, {sx:1230, sy:660, w:135, h:195}],
+        up:[{sx:1465, sy:195, w:195, h:180}, {sx:1465, sy:420, w:195, h:195}, {sx:1465, sy:30, w:195, h:135}],
+        down:[{sx:1235, sy:270, w:195, h:180}, {sx:1235, sy:25, w:195, h:195}, {sx:1235, sy:480, w:195, h:135}]
+    },
+
+    board:{sx:2, sy:2, w:1163, h:1163},
+    
+    redGhost:{right:{sx:735, sy:1200, w:210, h:210}, down:{sx:1245, sy:1200, w:210, h:210}, up:{sx:1755, sy:1200, w:210, h:210}, left:{sx:360, sy:1440, w:210, h:210}}, 
+
+    blueGhost:{right:{sx:615, sy:1440, w:210, h:210}, down:{sx:1125, sy:1440, w:210, h:210}, up:{sx:1635, sy:1440, w:210, h:210}, left:{sx:360, sy:1680, w:210, h:210}},
+
+    orangeGhost:{right:{sx:615, sy:1680, w:210, h:210}, down:{sx:1125, sy:1680, w:210, h:210}, up:{sx:1635, sy:1680, w:210, h:210}, left:{sx:360, sy:1920, w:210, h:210}},
+
+    pinkGhost:{right:{sx:615, sy:1920, w:210, h:210}, down:{sx:1125, sy:1920, w:210, h:210}, up:{sx:1635, sy:1925, w:210, h:210}, left:{sx:360, sy:2160, w:210, h:210}},
+
+    edibleGhost:{sx:615, sy:2160, w:210, h:210},
+    deadGhost:{sx:1125, sy:2160, w:210, h:210},
+
+    normalDot:{sx:1705, sy:105, w:25, h:25},
+    powerDot:{sx:2145, sy:95, w:42, h:43}
+};
+
+var spriteSheet=new function(){
+    this.map={};
+    this.load=function(spriteData, callback){
+        this.map=spriteData;
+        this.image=new Image();
+        this.image.onload=callback;
+        this.image.src='edited-spritesheet-final.png';
+    };
+    this.draw=function(ctx, sprite, x, y, scale, dir){ //frame-specific positions
+        var s=this.map[sprite];
+        if (!scale) scale=1;
+        if (sprite=='pacman'){
+            ctx.drawImage(this.image, s[dir][0].sx, s[dir][0].sy, s[dir][0].w, s[dir][0].h, Math.floor(x), Math.floor(y), s[dir][0].w*scale, s[dir][0].h*scale);
+        } else if (dir!==undefined){
+            ctx.drawImage(this.image, s[dir].sx, s[dir].sy, s[dir].w, s[dir].h, Math.floor(x), Math.floor(y), s[dir].w*scale, s[dir].h*scale);
+        } else
+            ctx.drawImage(this.image, s.sx, s.sy, s.w, s.h, Math.floor(x), Math.floor(y), s.w*scale, s.h*scale);
+    };
+
+    this.animate=function(ctx, sprite, x, y, scale, dir, frame){
+        var s=spriteSheet.map[sprite];
+        if (!scale) scale=1;
+        if (sprite=="pacman"){
+            if (frame===undefined)
+                var frame=0;
+            //ctx.clearRect(0, 0, Game.canvas.width, Game.canvas.height);
+            ctx.drawImage(spriteSheet.image, s[dir][frame].sx, s[dir][frame].sy, s[dir][frame].w, s[dir][frame].h, Math.floor(x), Math.floor(y), s[dir][frame].w*scale, s[dir][frame].h*scale);
+
+            if (frame<3)
+                setTimeout(this.animate, ANIMATE_TIME, ctx, sprite, x, y, scale, dir, frame+1);
+            //console.log(frame);
+            //ctx.drawImage(this.image, s[dir][0].sx, s[dir][0].sy, s[dir][0].w, s[dir][0].h, Math.floor(x), Math.floor(y), s[dir][0].w*scale, s[dir][0].h*scale);
+
+        }
+    };
+};
+
+var edgeDetection = function(obj) {
+	//Game.ctx.fillStyle="#ffffff";
+    var collide = {left: false, right: false, up: false, down: false};
+    if (obj.x>=obj.board.x && obj.x<=obj.board.x+obj.board.w*obj.board.scale){
+        for (var x=obj.x+1; obj.x+obj.w*obj.scale>x; x++){
+			/*Game.ctx.fillRect( x, obj.y-obj.margin, 1, 1 );
+			Game.ctx.fillRect( x, obj.y+obj.h*obj.scale+obj.margin, 1, 1 );*/
+            if (!arraysEqual(Game.ctx.getImageData(x, obj.y-obj.margin, 1, 1).data, hexToRgbA(CANVAS_COLOR))) {
+                collide['up']=true;
+            }
+            if (!arraysEqual(Game.ctx.getImageData(x, obj.y+obj.h*obj.scale+obj.margin, 1, 1).data, hexToRgbA(CANVAS_COLOR))) {
+                collide['down']=true;
+            }
+        }
+        for (var y=obj.y; obj.y+obj.h*obj.scale>=y; y++){
+			/*Game.ctx.fillRect( obj.x-obj.margin, y, 1, 1 );
+			Game.ctx.fillRect(obj.x+obj.w*obj.scale+obj.margin, y, 1, 1 );*/
+            if (!arraysEqual(Game.ctx.getImageData(obj.x-obj.margin, y, 1, 1).data, hexToRgbA(CANVAS_COLOR))) {
+                collide['left'] = true;
+            }
+            if (!arraysEqual(Game.ctx.getImageData(obj.x+obj.w*obj.scale+obj.margin, y, 1, 1).data, hexToRgbA(CANVAS_COLOR))) {
+                collide['right'] = true;
+            }
+        }
+    }
+
+    return collide;
+}
+
+var dots=function(){
+    this.type=DOTS;
+    
+    
+};
+
+var pacman=function(){
+    this.type=PLAYER;
+
+    this.dir='left';
+    this.scale=0.1;
+
+    this.w=spriteSheet.map['pacman'][this.dir][1].w;
+    this.h=spriteSheet.map['pacman'][this.dir][1].h;
+    this.x=400; //where it first appears
+    this.y=510;
+    this.vx=0;
+    this.vy=0;
+    this.step=80; //size of steps
+
+    this.margin=5; //margin to detect edge
+
+    this.touchingWall=false;
+
+    this.killed=function(){
+        this.board.markToRemove(this); //animation
+    };
+    
+    this.update=function(dt){
+        this.vx=0;
+        this.vy=0;
+
+        //check that only the 2 outs by horizontal side works 
+        //console.log(this.x+' board '+gameBoard.x);
+        if (this.x<this.board.x){
+            this.x=this.board.x.x+this.board.w*this.board.scale;
+            this.dir='left';
+        }
+        else if (this.x>this.board.x+this.board.w*this.board.scale){
+            this.x=this.board.x;
+            this.dir='right';
+        }
+        
+        /*if (this.x>=Game.screens[1].x && this.x<=Game.screens[1].x+Game.screens[1].w*Game.screens[1].scale){
+            //true if touching wall
+            var leftPixels=false, rightPixels=false, upPixels=false, downPixels=false;
+      		 
+            for (var x=this.x+1; this.x+this.w*this.scale>x; x++){
+                arraysEqual(Game.ctx.getImageData(x, this.y-this.margin, 1, 1).data, hexToRgbA(CANVAS_COLOR)) ? 0 : upPixels=true; 
+                arraysEqual(Game.ctx.getImageData(x, this.y+this.h*this.scale+this.margin, 1, 1).data, hexToRgbA(CANVAS_COLOR)) ? 0 : downPixels=true; 
+            }
+
+            for (var y=this.y; this.y+this.h*this.scale>=y; y++){
+                arraysEqual(Game.ctx.getImageData(this.x-this.margin, y, 1, 1).data, hexToRgbA(CANVAS_COLOR)) ? 0 : leftPixels=true; 
+                arraysEqual(Game.ctx.getImageData(this.x+this.w*this.scale+this.margin, y, 1, 1).data, hexToRgbA(CANVAS_COLOR)) ? 0 : rightPixels=true;
+            }*/
+		var collisions = edgeDetection(this);
+        var nonCollisions=[];
+        //console.log(collisions);
+        /*for (var i=0; i<Game.screens[1].directions.length; i++){
+            if (!collisions.includes(Game.screens[1].directions[i]))
+                nonCollisions.push(Game.screens[1].directions[i]);
+        }*/
+
+        ((collisions[this.dir] && this.dir=='left') || (collisions[this.dir] && this.dir=='right') || (collisions[this.dir] && this.dir=='up') || (collisions[this.dir] && this.dir=='down')) ? this.touchingWall=true : this.touchingWall=false;
+
+            if (Game.keys['left']){
+                if (!collisions['left'])
+                    this.vx=-this.step;
+                this.dir='left';
+            } else if (Game.keys['right']){
+                if (!collisions['right'])
+                    this.vx=this.step;
+                this.dir='right';
+            } else if (Game.keys['up']){
+                if (!collisions['up'])
+                    this.vy=-this.step;
+                this.dir='up';
+            } else if (Game.keys['down']){
+                if (!collisions['down'])
+                    this.vy=this.step;
+                this.dir='down';
+            } else{
+                if (this.dir=='left' && !collisions['left']){
+                    this.vx=-this.step;
+                } else if (this.dir=='right' && !collisions['right']){
+                    this.vx=this.step;
+                } else if (this.dir=='up' && !collisions['up']){
+                    this.vy=-this.step;
+                } else if (this.dir=='down' && !collisions['down']){
+                    this.vy=this.step;
+                }
+            } 
+
+            this.x+=this.vx*dt;
+            this.y+=this.vy*dt;
+    };
+    
+    this.draw=function(ctx){
+        //console.log('draw pacman');
+        //if touching wall: spriteSheet.draw(ctx, 'pacman', this.x, this.y, this.scale, this.dir);
+        //else
+
+        if (this.touchingWall)
+            spriteSheet.draw(ctx, 'pacman', this.x, this.y, this.scale, this.dir);
+        else
+            spriteSheet.animate(ctx, 'pacman', this.x, this.y, this.scale, this.dir);
+    };
+};
+
+var ghost = function(x, y, name, getTarget) {
+	//var direction = ['up', 'down', 'left', 'right'];
+	this.name=name;
+
+    this.type=GHOSTS;
+
+    this.dir='left';
+    this.scale=0.095;
+
+    this.w=spriteSheet.map[this.name][this.dir].w;
+    this.h=spriteSheet.map[this.name][this.dir].h;
+    this.x=x; //where it first appears, x=390 & y=275
+    this.y=y;
+
+	/*this.i=i;
+	this.j=j;*/
+
+    this.step = 70;
+
+    this.margin=2;
+
+	this.distance = function(position1, position2) {
+		var dx = position1.x - position2.x;
+		var dy = position1.y - position2.y;
+		return Math.sqrt(dx * dx + dy * dy);
+	};
+
+	this.difference = function(a, b) {
+		return a.filter(new function(value) {
+			return !b.includes(value);
+		});
+	};
+
+	this.move= function(position, dir) {
+		/*if (dir == 'up') {
+			return {x: position.x, y: position.y - 1};
+		} else if (dir == 'down') {
+			return {x: position.x, y: position.y + 1};
+		} else if (dir == 'left') {
+			return {x: position.x - 1, y: position.y};
+		} else if (dir == 'right') {
+			return {x: position.x + 1, y: position.y};
+		}*/
+		if (dir == 'up') {
+			return  {
+				x: position.x - length,
+				y: position.y
+			}
+		} else if (dir == 'down') {
+			return  {
+				x: position.x + length,
+				y: position.y
+			}
+		} else if (dir == 'left') {
+			return  {
+				x: position.x,
+				y: position.y - length
+			}
+		} else if (dir == 'right') {
+			return  {
+				x: position.x,
+				y: position.y + length
+			}
+		}
+	};
+
+	this.getConnectDir = function(map, position) {
+		var connectDir = [];
+		for (var dir in direction) {
+			var newPosition = move(position, dir);
+			if (newPosition.x < 0 || newPosition.x >= map.width || newPosition.y < 0 || newPosition.y >= map.height) {
+				continue;
+			}
+			if (map[newPosition.x][newPosition.y] == 1) {
+				connectDir.push(dir);
+			}
+		}
+		return connectDir;
+	}
+
+	this.trace = function(target, dt) {
+		var collide = edgeDetection(this);
+		//console.log(collide);
+		var candidateDic = [];
+		for (var key in collide) {
+			if (!collide[key]) {
+				candidateDic.push(key);
+			}
+		}
+		if (candidateDic.length == 0) { //when 4 dirs touch wall
+			return;
+		}
+		var d_step = this.step * dt;
+		var newPosition = this.move({x: this.x, y: this.y}, candidateDic[0], d_step);
+		var minDistance = this.distance(newPosition, target);
+		var newDir = candidateDic[0];
+		for (var i = 1; i < candidateDic.length; i++) {
+			var currentPosition = this.move({x: this.x, y: this.y}, candidateDic[i], d_step);
+			var currentDistance = this.distance(currentPosition, target);
+			if (currentDistance < minDistance) {
+				minDistance = currentDistance;
+				newDir = candidateDic[i];
+				newPosition = currentPosition;
+			}
+		}
+		this.dir = newDir;
+		this.x = newPosition.x;
+		this.y = newPosition.y;
+		/*var validDir = getConnectDir(map, this.position);
+		if (validDir.length == 0) {
+			return;
+		}
+		var board = new Array(map.height);
+		for (var i = 0; i < map.height; i++) {
+			board[i] = new Array(map.width);
+			for (var j = 0; j < map.width; j++) {
+				board[i][j] = {level: 100000};
+			}
+		}
+		board[this.position.x][this.position.y] = {level: 0, last: null, dir: undefined};
+		var queue = [this.position];
+		while ((queue[0].x == target.x && queue[0].y == target.y)) {
+			var position = queue[0].position;
+			var level = board[position.x][position.y].level;
+			var validDir = getConnectDir(map, queue[0].position);
+			for (var dir in validDir) {
+				var newPosition = move(position, dir);
+				if (newPosition.x < 0 || newPosition.x >= map.width || newPosition.y < 0 || newPosition.y >= map.height) {
+					continue;
+				}
+				if (level + 1 < board[newPosition.x][newPosition.y].level) {
+					board[newPosition.x][newPosition.y] = {level: level + 1, last: position, dir: dir};
+				}
+			}
+		}
+		var currentPosition = target;
+		while (board[currentPosition.x][currentPosition.y].last != null) {
+			currentPosition = board[currentPosition.x][currentPosition.y].last;
+		}
+		return board[currentPosition.x][currentPosition.y].dir;*/
+
+	}
+
+	this.update = function(dt) {
+		/*Game.ctx.fillStyle="#ffffff";
+		for (var i=this.board.x; i<this.board.x+this.board.w*this.board.scale; i++){
+			//console.log(this.board.x+this.board.w*this.board.scale + ' '+this.board.x);
+			for (var j=this.board.y; j<this.board.y+this.board.h*this.board.scale; j++){
+				if ((i-this.board.x)%Math.round(this.w*this.scale)==0 || (j-this.board.y)%Math.round(this.h*this.scale)==0){
+					Game.ctx.fillRect( i, j, 1, 1 );
+				}
+			}
+		}*/
+		this.trace(getTarget(), dt);
+	}
+
+    /*this.update = function(dt) {
+		var positionsDict=this.board.passPositions();
+		console.log(positionsDict);
+        var collisions = edgeDetection(this);
+		var nonCollisions=[];
+        console.log(collisions);
+		for (var i=0; i<Game.screens[1].directions.length; i++){
+			if (!collisions.includes(Game.screens[1].directions[i]))
+				nonCollisions.push(Game.screens[1].directions[i]);
+		}
+        if (collisions[this.dir]) {
+			for (var key in collisions){
+				if (!collisions[key])
+					nonCollisions.push(key);
+			}
+			this.dir = nonCollisions[Math.floor(Math.random() * nonCollisions.length)];
+        }
+		console.log(nonCollisions);
+		console.log(collisions);
+        
+        
+		var d_step = this.step * dt;
+        if (this.dir == 'left') {
+            this.x -= d_step;
+        } else if (this.dir == 'right') {
+            this.x += d_step;
+        } else if (this.dir == 'up') {
+            this.y -= d_step;
+        } else if (this.dir == 'down') {
+            this.y += d_step;
+        }
+    };*/
+    this.draw=function(ctx){
+        spriteSheet.draw(ctx, this.name, this.x, this.y, this.scale, this.dir);
+    };
+}
+
+var startGame=function(){
+    
+    Game.screens[0].draw(Game.ctx);
+    //spriteSheet.draw(Game.ctx, "pacman", 100, 100, 0.2);
+    //console.log('start');
+};
+
+var playGame=function(){
+    var board=new gameBoard();
+    board.add(new pacman());
+
+    board.add(new ghost(335, 285, "redGhost", function () {
+		var position = board.passPositions();
+		var pacman = position[PLAYER];
+		return {x: pacman.x, y: pacman.y};
+	}));
+	/*board.add(new ghost(700, 285, "blueGhost", function () {
+		var position = board.passPositions();
+		var pacman = position[PLAYER];
+		var redGhost = position['redGhost'];
+		var size = (pacman.h + pacman.w) / 2;
+		return {x: (pacman.x + 2 * pacman.size) * 2 - redGhost.x, y: (pacman.y + 2 * pacman.size) * 2 - redGhost.y};
+	}));
+	board.add(new ghost(755, 285, "pinkGhost", function () {
+		var position = board.passPositions();
+		var pacman = position[PLAYER];
+		var size = (pacman.h + pacman.w) / 2;
+		return {x: pacman.x + 4 * pacman.size, y: pacman.y + 4 * pacman.size};
+	}));
+	board.add(new ghost(965, 285, "orangeGhost", function () {
+		var position = board.passPositions();
+		var pacman = position[PLAYER];
+		return {x: pacman.x, y: pacman.y};
+	}));*/
+
+    Game.setScreen(1, board);
+    Game.screens[1].draw(Game.ctx);
+    //board.add
+};
+
+var Game=new function(){
+    this.screens=[];
+    this.keys={};
+    var keyCodes={87: 'up', 83: 'down', 65: 'left', 68: 'right', 32: 'space', 27: 'esc'};
+
+    this.init=function(spriteData, callback){
+        this.canvas=document.getElementById('game');
+        this.width=this.canvas.width;
+        this.height=this.canvas.height;
+
+        this.ctx=this.canvas.getContext('2d');
+        this.setupInput();
+
+        spriteSheet.load(spriteData, callback);
+
+        Game.setScreen(0, new titleScreen("Pacman", "Press [space] to begin"));
+        Game.setScreen(1, new gameBoard());
+        Game.setScreen(2, new titleScreen("Paused", "Press [space] to continue"));
+        Game.setScreen(3, new titleScreen("Game Over", "Press [space] to restart"));
+    
+        //console.log('init');
+        this.loop();
+    };
+   
+    this.setupInput=function() {
+            window.addEventListener('keydown',function(e) {
+                    if(keyCodes[e.keyCode]) {
+                            Game.keys[keyCodes[e.keyCode]] = true;
+                            e.preventDefault();
+                            //e.stopPropagation();
+                    }
+            },false);
+
+            window.addEventListener('keyup',function(e) {
+                    if(keyCodes[e.keyCode]) {
+                            Game.keys[keyCodes[e.keyCode]] = false;
+                            e.preventDefault();
+                            //e.stopPropagation();
+                    }
+            },false);
+    };
+
+    this.loop=function(){
+        //console.log('loop');
+        var dt=UPDATE_TIME/1000;
+        if (Game.keys['space'] && Game.screens[0].active){
+            playGame();
+        } else if (Game.keys['space'] && Game.screens[2].active){
+            Game.screens[1].draw(Game.ctx);
+        } else if (Game.keys['space'] && Game.screens[3].active){
+            //restart game
+            playGame();
+        } else if (Game.keys['esc'] && Game.screens[1].active){
+            //pause game
+            Game.screens[2].draw(Game.ctx);
+        } else{
+            if( Game.screens[1].active){
+                Game.screens[1].draw(Game.ctx);
+                Game.screens[1].update(dt);
+            }
+        }
+
+        setTimeout(Game.loop, UPDATE_TIME);
+
+    };
+
+    this.setScreen= function(num, screen){ Game.screens[num]=screen; };
+};
+
+var gameBoard=function(){
+    var board=this;
+    this.scale=0.75;
+    this.w=spriteSheet.map['board'].w;
+    this.h=spriteSheet.map['board'].h;
+    this.x=(Game.canvas.width-this.w*this.scale)/2;
+    this.y=(Game.canvas.height-this.h*this.scale)/2;
+
+    this.active=false;
+    this.objects=[];
+    this.objTypeCounts=[];
+
+	this.bitmap=[
+		'00000000000000000000000000000000',
+		'01111111111111100111111111111110',
+		'01000111000011100111000011100010',
+		'01000111000011100111000011100010',
+		'01111111111111100111111111111110',
+		'01111111111111111111111111111110',
+		'01000111111100000000111111100010',
+		'01000111001100000000110011100010',
+		'01111111001111100111110011111110',
+		'01111111001111100111110011111110',
+		'00000011000001100110000011000000',
+		'00000011000001100110000011000000',
+		'00000011001111111111110011000000',
+		'00000011001111111111110011000000',
+		'00000011001100000000110011000000',
+		'11111111111101111110111111111111',
+		'11111111111101111110111111111111',
+		'00000011001100000000110011000000',
+		'00000011001111111111110011000000',
+		'00000011001111111111110011000000',
+		'00000011001100000000110011000000',
+		'01111111111111100111111111111110',
+		'01000011000011100111000011000010',
+		'01110011000011100111000011001110',
+		'01110011111111100111111111001110',
+		'01110011111111111111111111001110',
+		'00111111001100000000110011111100',
+		'01111111001111100111110011111110',
+		'01000000000011100111000000000010',
+		'01000000000011100111000000000010',
+		'01111111111111111111111111111110',
+		'00000000000000000000000000000000'
+	];
+
+	//this.directions=["left", "right", "up", "down"];
+
+    this.add=function(obj){
+        obj.board=this;
+        this.objects.push(obj);
+        this.objTypeCounts[obj.type]=(this.objTypeCounts[obj.type] || 0)+1;
+        return obj;
+    };
+
+    this.objectsToRemove=[];
+
+    this.markToRemove=function(obj){
+        var alive=this.objects.indexOf(obj)!=-1;
+        if (alive)
+            this.objectsToRemove.push(obj);
+        return alive;
+    };
+
+    this.resetObjectsToRemove=function(obj){ this.objectsToRemove=[]; };
+
+    this.remove=function(){
+        for (var i=0;i<this.objectsToRemove.length;i++){
+            var idx=this.objects.indexOf(this.objectsToRemove[i]);
+            if (idx!=-1){
+                this.objTypeCounts[this.objectsToRemove[i].type]--;
+                this.objects.splice(idx, 1);
+            }
+        }
+    };
+
+    this.iterate=function(func){
+        var args=Array.prototype.slice.call(arguments, 1);
+        for (var i=0;i<this.objects.length;i++){
+            var obj=this.objects[i];
+            obj[func].apply(obj, args);
+        }
+    };
+
+    /*this.overlap=function(o1, o2){
+        return !((o1.y+o1.h-1<o2.y) || (o1.y>o2.y+o2.h-1) || (o1.x+o1.w-1<o2.x) || (o1.x>o2.x+o2.w-1));
+
+    };*/
+    
+    this.collide=function(obj,enemyType) {
+                for(var i = 0, len=this.objects.length; i < len; i++) {
+                    var opponent = this.objects [i];
+                    if(obj != opponent) {
+                        var collision = (!enemyType || opponent.type === enemyType) && board.overlap(obj,opponent) ;
+                        if (collision)
+                            return opponent;
+                    }
+                }
+                return false;
+    };
+
+	this.passPositions=function(){
+		var positionsDict={};
+		for (var i=0; i<this.objects.length; i++){
+			if (this.objects[i].type==PLAYER || this.objects[i].type==GHOSTS){
+				if (this.objects[i].name)
+					positionsDict[this.objects[i].name]={'x': this.objects[i].x, 'y': this.objects[i].y};
+				else
+					positionsDict[this.objects[i].type]={'x': this.objects[i].x, 'y': this.objects[i].y, 'w': this.objects[i].w, 'h': this.objects[i].h, 'dir': this.objects[i].dir };
+			}
+		}
+		return positionsDict;
+	};
+
+    this.update=function(dt){
+        //console.log('board update');
+        this.resetObjectsToRemove();
+        this.iterate('update', dt);
+        this.remove();
+    };
+    
+    this.draw=function(ctx){
+        ctx.fillStyle="#000000";
+        ctx.fillRect(0,0,Game.canvas.width,Game.canvas.height);
+
+        spriteSheet.draw(ctx, 'board', this.x, this.y, this.scale);
+
+        this.iterate('draw', ctx);
+        //draw actual board
+        //spriteSheet.animate(ctx, 'pacman', this.x, this.y, this.scale, this.dir);
+        //console.log('draw');
+        
+        for(var i=0;i<Game.screens.length;i++) {
+                if( Game.screens[i])
+                    Game.screens[i].active=false;
+        }
+        this.active=true;
+    };
+};
+
+var titleScreen=function(title, subtitle){
+    this.title=title;
+    this.subtitle=subtitle;
+    //this.callback=callback;
+    this.active=false;
+    
+    /*this.update=function(){
+        if (Game.keys['space'] && this.callback)
+            this.callback(num);
+    };*/
+    this.draw= function(ctx){
+        ctx.fillStyle="rgb(0,0,0)";
+        ctx.fillRect(0,0,Game.canvas.width,Game.canvas.height);
+
+        ctx.fillStyle = "#FFFFFF";
+        ctx.textAlign = "center";
+        ctx.font = "bold 2em bangers";
+        ctx.fillText(this.title,Game.width/2,Game.height/2);
+
+        ctx.font = "bold 1.5em bangers";
+        ctx.fillText(this.subtitle,Game.width/2,Game.height/2 + 40);
+
+        for(var i=0;i<Game.screens.length;i++) {
+                if( Game.screens[i])
+                    Game.screens[i].active=false;
+        }
+        this.active=true;
+
+    };
+};
+
+</script>
