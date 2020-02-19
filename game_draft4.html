@@ -126,13 +126,13 @@ var calcMove= function(pos, dir, blocks) {
 	if (blocks===undefined)
 		blocks=1;
 	if (dir == 'up') {
-		return {i: pos.i, j: pos.j - blocks};
+		return {i: pos.i-blocks, j: pos.j};
 	} else if (dir == 'down') {
-		return {i: pos.i, j: pos.j + blocks};
+		return {i: pos.i+blocks, j: pos.j};
 	} else if (dir == 'left') {
-		return {i: pos.i - blocks, j: pos.j};
+		return {i: pos.i, j: pos.j-blocks};
 	} else if (dir == 'right') {
-		return {i: pos.i + blocks, j: pos.j};
+		return {i: pos.i, j: pos.j+blocks};
 	}
 };
 
@@ -142,10 +142,10 @@ var checkBorders=function(pos){
 		pos.i=0;
 	if (pos.j<0)
 		pos.j=0;
-	if (pos.i>=Math.round(Game.board.w*Game.board.scale/(spriteSheet.map['redGhost']['left'].w*GHOST_BLOCK_SCALE)))
-		pos.i=Math.round(Game.board.w*Game.board.scale/(spriteSheet.map['redGhost']['left'].w*GHOST_BLOCK_SCALE))-1;
-	if (pos.j>=Math.round(Game.board.h*Game.board.scale/(spriteSheet.map['redGhost']['left'].h*GHOST_BLOCK_SCALE)))
-		pos.j=Math.round(Game.board.h*Game.board.scale/(spriteSheet.map['redGhost']['left'].h*GHOST_BLOCK_SCALE))-1;
+	if (pos.i>=Math.round(Game.board.w*Game.board.scale/(spriteSheet.map['redGhost']['left'].h*GHOST_BLOCK_SCALE)))
+		pos.i=Math.round(Game.board.w*Game.board.scale/(spriteSheet.map['redGhost']['left'].h*GHOST_BLOCK_SCALE))-1;
+	if (pos.j>=Math.round(Game.board.h*Game.board.scale/(spriteSheet.map['redGhost']['left'].w*GHOST_BLOCK_SCALE)))
+		pos.j=Math.round(Game.board.h*Game.board.scale/(spriteSheet.map['redGhost']['left'].w*GHOST_BLOCK_SCALE))-1;
 	return pos;
 };
 
@@ -237,9 +237,9 @@ var pacman=function(x, y){
             this.x+=this.vx*dt;
             this.y+=this.vy*dt;
 
-			this.i=Math.round((this.x+this.w*this.scale)/(spriteSheet.map['redGhost']['left'].w*GHOST_BLOCK_SCALE));
+			this.i=Math.round((this.y+this.h*this.scale)/(spriteSheet.map['redGhost']['left'].h*GHOST_BLOCK_SCALE));
 			//console.log(spriteSheet.map['redGhost']);
-			this.j=Math.round((this.y+this.h*this.scale)/(spriteSheet.map['redGhost']['left'].h*GHOST_BLOCK_SCALE));
+			this.j=Math.round((this.x+this.w*this.scale)/(spriteSheet.map['redGhost']['left'].w*GHOST_BLOCK_SCALE));
     };
     
     this.draw=function(ctx){
@@ -265,8 +265,6 @@ var ghost = function(i, j, name, getTarget) {
 
     this.w=spriteSheet.map[this.name][this.dir].w;
     this.h=spriteSheet.map[this.name][this.dir].h;
-    /*this.x=this.board.x+this.w*this.scale*this.i; //where it first appears, x=390 & y=275
-    this.y=this.board.y+this.h*this.scale*this.j;*/
 
 	this.x;
 	this.y;
@@ -276,19 +274,14 @@ var ghost = function(i, j, name, getTarget) {
 	this.j=j;
 
     this.step = 70;
+	this.moveDistance;
 
     this.margin=2;
 
-	this.distance = function(pos1, pos2) {
+	/*this.distance = function(pos1, pos2) {
 		var dx = pos1.x - pos2.x;
 		var dy = pos1.y - pos2.y;
 		return Math.sqrt(dx * dx + dy * dy);
-	};
-
-		/*this.difference = function(a, b) {
-		return a.filter(new function(value) {
-			return !b.includes(value);
-		});
 	};*/
 
 	/*var calcTargets(dir, i, j, c){
@@ -314,14 +307,32 @@ var ghost = function(i, j, name, getTarget) {
 			//console.log(dirs[i]);
 			var newPosition = calcMove(pos, dirs[i]);
 			//console.log(newPosition);
-			if (newPosition.i < 0 || newPosition.i >= map[0].length || newPosition.j < 0 || newPosition.j >= map.length) {
+			if (newPosition.i < 0 || newPosition.i >= map.length || newPosition.j < 0 || newPosition.j >= map[0].length) {
 				continue;
 			}
-			if (map[newPosition.i][newPosition.j] == '1') {
+			if (map[newPosition.i][newPosition.j] == 1) {
 				connectDir.push(dirs[i]);
 			}
 		}
 		return connectDir;
+	}
+
+	this.difference = function(a, b) {
+		return a.filter(function(value) {
+			return !b.includes(value);
+		});
+	};
+
+	this.opposite = function(dir) {
+		if (dir == 'up') {
+			return 'down';
+		} else if (dir == 'down') {
+			return 'up';
+		} else if (dir == 'left') {
+			return 'right';
+		} else if (dir == 'right') {
+			return 'left';
+		}
 	}
 
 	this.trace = function(target, dt) {
@@ -329,10 +340,11 @@ var ghost = function(i, j, name, getTarget) {
 		var map=this.board.bitmap;
 		var pos={i: this.i, j: this.j};
 		//console.log(pos);
-		var validDir = this.getConnectDir(map, pos);
-		//console.log(validDir);
+		var validDir = this.difference(this.getConnectDir(map, pos), [this.opposite(this.dir)]);
 		if (validDir.length == 0) {
 			return;
+		} else if (validDir.length == 1) {
+			return validDir[0];
 		}
 		var board = new Array(map.length);
 		for (var i = 0; i < map.length; i++) {
@@ -341,8 +353,13 @@ var ghost = function(i, j, name, getTarget) {
 				board[i][j] = {level: Infinity};
 			}
 		}
-		board[pos.i][pos.j] = {level: 0, last: null, dir: undefined};
-		var queue = [pos];
+		var queue = [];
+		board[pos.i][pos.j] = {level: 0, last: null, dir: null};
+		for (var i = 0; i < validDir.length; i++) {
+			var initPos = calcMove(pos, validDir[i]);
+			board[initPos.i][initPos.j] = {level: 1, last: pos, dir: validDir[i]};
+			queue.push(initPos);
+		}
 		var realisticTarget;
 		var step = 0;
 		while (true) {
@@ -369,36 +386,37 @@ var ghost = function(i, j, name, getTarget) {
 			}
 			step++;
 		}
-		console.log("--------------");
-		console.log(realisticTarget);
+		//console.log("--------------");
+		//console.log(realisticTarget);
 		while (!(queue[0].i == realisticTarget.i && queue[0].j == realisticTarget.j)) {
 			var tempPos = queue[0];
 			var level = board[tempPos.i][tempPos.j].level;
-			var validDir = this.getConnectDir(map, queue[0]);
-			for (var i=0; i<validDir.length; i++) {
+			var connectDir = this.getConnectDir(map, queue[0]);
+			for (var i=0; i<connectDir.length; i++) {
 				//console.log('queue: '+queue[0].i);
 				//console.log('realistic: '+realisticTarget.i);
-				var newPosition = calcMove(tempPos, validDir[i]);
+				var newPosition = calcMove(tempPos, connectDir[i]);
 				//console.log(newPosition);
-				if (newPosition.i < 0 || newPosition.i >= map[0].length || newPosition.j < 0 || newPosition.j >= map.length) {
+				if (newPosition.i < 0 || newPosition.i >= map.length || newPosition.j < 0 || newPosition.j >= map[0].length) {
 					console.log(1);
 					continue;
 				}
 				if (level + 1 < board[newPosition.i][newPosition.j].level) {
-					console.log(tempPos);
-					board[newPosition.i][newPosition.j] = {level: level + 1, last: tempPos, dir: validDir[i]};
+					//console.log(tempPos);
+					board[newPosition.i][newPosition.j] = {level: level + 1, last: tempPos, dir: connectDir[i]};
 					queue.push({i: newPosition.i, j: newPosition.j});
 				}
 			}
 			queue.splice(0, 1);
+			first = false;
 		}
-		console.log(pos);
-		console.log(realisticTarget);
+		//console.log(pos);
+		//console.log(realisticTarget);
 		var currentPosition = realisticTarget;
-		console.log("xxxxxxx");
+		/*console.log("xxxxxxx");
 		console.log(pos);
 		console.log(board[currentPosition.i][currentPosition.j].last);
-		console.log(board);
+		console.log(board);*/
 		while (board[currentPosition.i][currentPosition.j].last !== null) {
 			var lastPos = board[currentPosition.i][currentPosition.j].last;
 			if (board[lastPos.i][lastPos.j].last == null) {
@@ -412,56 +430,69 @@ var ghost = function(i, j, name, getTarget) {
 
 	this.update = function(dt) {
 		if (this.x===undefined && this.y===undefined){
-			this.x=Game.canvas.width+this.board.x*this.board.scale+this.w*this.scale*this.i;
-			this.y=Game.canvas.height+this.board.y*this.board.scale+this.h*this.scale*this.j;
+			this.x=this.board.x*this.board.scale+this.w*this.scale*this.j;
+			this.y=this.board.y*this.board.scale+this.h*this.scale*this.i;
+			this.prevX=this.x;
+			this.prevY=this.y;
 		}
+		if (this.moveDistance===undefined)
+			this.moveDistance=this.step*dt;
+		//console.log('prevX '+this.prevX+' x '+this.x);
+		//console.log('prevY '+this.prevY+' y '+this.y);
+		if (this.prevX!=this.x || this.prevY!=this.y)
+			return; //block move not finished
 
+		//console.log('running');
 		var position = this.board.passPositions();
 		//console.log(position);
 		this.dir=this.trace(getTarget(position), dt);
-		console.log(this.dir+' trace');
-		this.prevX=this.x;
-		this.prevY=this.y;
+		//console.log(this.dir+' trace');
 
 		if (this.dir=='left'){
-			this.i--;
+			this.j--;
 			this.x-=this.w*this.scale;
 		} else if (this.dir=='right'){
-			this.i++;
+			this.j++;
 			this.x+=this.w*this.scale;
 		} else if (this.dir=='up'){
-			this.j--;
+			this.i--;
 			this.y-=this.h*this.scale;
 		} else if (this.dir=='down'){
-			this.j++;
+			this.i++;
 			this.y+=this.h*this.scale;
 		}
+
 	   	//walk this.w/this.step to dir
 				
     };
 
     this.draw=function(ctx){
-		//for (int i=0; i<this.w*this.scale; i+=this.step)
-		/*var s=spriteSheet.map[this.name];
-		var x=this.prevX;
-		var y=this.prevY;
-
-		var pos={i: x, j: y};//i is x & j is y
-		//console.log(x+' '+this.x);
-		var steps=Math.floor(Math.abs(this.x-x)/this.step);
-		var remain=Math.abs(this.x-x)%this.step;
-		for (var move=0; move<steps; move++){
-			console.log(2222222222222222);
-			calcMove(pos, this.dir, this.step);
-        	ctx.drawImage(spriteSheet.image, s[this.dir].sx, s[this.dir].sy, s[this.dir].w, s[this.dir].h, Math.floor(pos.i), Math.floor(pos.j), s[this.dir].w*this.scale, s[this.dir].h*this.scale);
+		var tempPos={i : this.prevY, j: this.prevX};
+		var diffX=Math.abs(this.prevX-this.x);
+		var diffY=Math.abs(this.prevY-this.y);
+		if (diffX)
+			var remain=diffX%this.moveDistance;
+		else
+			var remain=diffY%this.moveDistance;
+		if ((diffX && diffX!=remain) || (diffY && diffY!=remain))
+			tempPos=calcMove(tempPos, this.dir, this.moveDistance);
+		else
+			tempPos=calcMove(tempPos, this.dir, remain);
+		this.prevX=tempPos.j;
+		this.prevY=tempPos.i;
+		//var i=Math.round((this.x+this.w*this.scale)/(spriteSheet.map['redGhost']['left'].w*GHOST_BLOCK_SCALE));
+		//ADD GHOST WIDTH & HEIGHT AS blockSize in Game, so is scale
+		//var j=Math.round((this.y+this.h*this.scale)/(spriteSheet.map['redGhost']['left'].h*GHOST_BLOCK_SCALE));
+		/*var tempPos={i : this.prevY, j: this.prevX}; //use calcMove for cal. y & x 
+		var moveSteps=Math.floor(Math.abs(this.x-this.prevX)/this.moveDistance);
+		for (var move=0; move<moveSteps; move++){
+        	spriteSheet.draw(ctx, this.name, tempPos.j, tempPos.i, this.scale, this.dir);
+			tempPos=calcMove(tempPos, this.dir, this.moveDistance);
 		}
-		calcMove(pos, this.dir, remain);
-		console.log(this.dir);
-		console.log(s[this.dir]);
-		ctx.drawImage(spriteSheet.image, s[this.dir].sx, s[this.dir].sy, s[this.dir].w, s[this.dir].h, Math.floor(pos.i), Math.floor(pos.j), s[this.dir].w*this.scale, s[this.dir].h*this.scale);
+		var remain=Math.abs(this.x-this.prevX)%this.moveDistance;
+		tempPos=calcMove({i : tempPos.i, j: tempPos.j}, this.dir, remain);*/
+		spriteSheet.draw(ctx, this.name, this.prevX, this.prevY, this.scale, this.dir);
 
-        //spriteSheet.draw(ctx, this.name, this.x, this.y, this.scale, this.dir);*/
-		spriteSheet.draw(ctx, this.name, this.x, this.y, this.scale, this.dir);
     };
 };
 
@@ -497,7 +528,14 @@ var playGame=function(){//this.board for ghosts
 	}));
 	board.add(new ghost(2, 4, "orangeGhost", function (position) { //change algorithm
 		var pacman = position[PLAYER];
-		return {i: pacman.i, j: pacman.j};
+		var orangeGhost = position['orangeGhost'];
+		var di = orangeGhost.i - pacman.i;
+		var dj = orangeGhost.j - pacman.j;
+		if (di * di + dj * dj > 8 * 8) {
+			return {i: pacman.i, j: pacman.j};
+		} else {
+			return {i: 30, j: 1};
+		};
 	}));
 
     Game.setScreen(1, board);
